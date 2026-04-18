@@ -19,10 +19,27 @@ config.keys = {
 --   2. Auto-connect on launch: uncomment the block below with your VM's
 --      address and username, then launching wezterm opens straight in.
 --
+-- NOTE: multiplexing = 'None' is important — without it, wezterm tries to
+-- spawn a `wezterm-mux-server` on the remote and demands matching wezterm
+-- versions on both ends. Plain SSH is what you want when the remote runs
+-- tmux (tmux already gives you persistent sessions).
+--
+-- Windows identity paths: use [[C:\Users\you\.ssh\id_ed25519]] (Lua
+-- long-string literal, no escape processing) or forward slashes.
+--
 -- config.ssh_domains = {
---   { name = 'vm', remote_address = 'host.or.ip', username = 'you' },
+--   {
+--     name = 'dev',
+--     remote_address = 'host.or.ip:22',
+--     username = 'you',
+--     multiplexing = 'None',
+--     ssh_option = {
+--       identityfile = [[C:\Users\you\.ssh\id_ed25519]],
+--       identitiesonly = 'yes',
+--     },
+--   },
 -- }
--- config.default_domain = 'vm'
+-- config.default_domain = 'dev'
 
 -- Scrollback and mouse behavior (both work because ConPTY is out of the
 -- picture — mouse wheel in tmux panes scrolls per-pane as expected).

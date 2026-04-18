@@ -119,6 +119,11 @@ connection uses WezTerm's built-in client (`wezterm ssh ...` or
 `ssh_domains`), not `ssh.exe` invoked as a command inside WezTerm. The
 latter goes through ConPTY with the same limitations as Alacritty.
 
+**WezTerm errors on connect that versions must match between client and
+server.** Your `ssh_domain` is using the default `multiplexing = 'WezTerm'`,
+which attempts to start `wezterm-mux-server` on the remote. Set
+`multiplexing = 'None'` on the ssh_domain to use plain SSH.
+
 ## References
 
 - [Claude Code terminal docs](https://code.claude.com/docs/en/terminal-config)
