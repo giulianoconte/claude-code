@@ -1,0 +1,12 @@
+# Shift+Enter → ESC + CR (Meta+Return), so Claude Code inserts a newline
+# instead of submitting.
+#
+# Why not the CSI-u sequence "\u001b[13;2u" that most guides recommend?
+# When Alacritty runs ssh.exe on Windows, Windows's ConPTY layer intercepts
+# CSI-bracket sequences on input and strips them before they reach ssh.
+# ESC + CR survives ConPTY and also matches what Claude Code expects by
+# default for Alacritty.
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Shift"
+chars = "\u001b\r"
