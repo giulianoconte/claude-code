@@ -99,6 +99,30 @@ in older guides) is not recognized on Windows.
 
 Verification: `showkey -a` + Shift+Enter → `^[ 27` then `^M 13`.
 
+## Dotfiles are manual copies — mind the drift
+
+The files under `dotfiles/` are **plain copies, not symlinks**. Nothing
+syncs them automatically: editing a live config does not update the repo,
+and pulling the repo does not update the live config. They drift silently
+— the tracked `.tmux.conf` sat weeks of edits behind `~/.tmux.conf` before
+anyone noticed.
+
+So treat the copy step as part of the edit: **after changing a live file,
+copy it back into `dotfiles/` and commit** (and after pulling, copy it
+back out to where it lives). Targets:
+
+| repo file | lives at |
+| --- | --- |
+| `dotfiles/.tmux.conf` | `~/.tmux.conf` (VM) |
+| `dotfiles/.bash_aliases` | `~/.bash_aliases` (VM) |
+| `dotfiles/viddy.toml` | `~/.config/viddy.toml` (VM) |
+| `dotfiles/wezterm.lua` | `%USERPROFILE%\.wezterm.lua` (Windows host) |
+| `dotfiles/alacritty.toml` | `%APPDATA%\alacritty\alacritty.toml` (Windows host) |
+
+(A symlink-based setup would remove the drift entirely; this repo
+deliberately keeps copies so the Windows-side files can diverge from the
+VM-side originals.)
+
 ## Troubleshooting
 
 **Shift+Enter produces nothing.** Wrong config path, or the config did
