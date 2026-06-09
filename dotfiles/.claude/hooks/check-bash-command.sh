@@ -33,6 +33,20 @@ BLOCK_PATTERNS = [
     (r'\bgh\s+api\b.*(?:-X|--method)[=\s]*(?:POST|PUT|PATCH|DELETE)', 'gh api mutation'),
 ]
 
+# ── Read-only allowlist (run silently) — checked AFTER BLOCK so it can never
+# override a hard deny. Known read-only gh inspection: repo visibility/metadata,
+# PR/release/run/workflow reads, login status. NB: `gh auth status` only (NOT
+# `gh auth token`, which prints the token). The whole `gh secret` surface stays
+# hard-denied above — we don't even read secret names. Default gh api (GET) stays
+# ask — too broad to blanket-allow.
+ALLOW_PATTERNS = [
+    (r'\bgh\s+repo\s+(view|list)\b', 'gh repo view/list'),
+    (r'\bgh\s+(pr|release|run|workflow)\s+(view|list)\b', 'gh read-only view/list'),
+    (r'\bgh\s+pr\s+(diff|checks|status)\b', 'gh pr read'),
+    (r'\bgh\s+auth\s+status\b', 'gh auth status'),
+    (r'\bgh\s+(label|cache|gist)\s+list\b', 'gh list'),
+]
+
 # ── Deny patterns (regex, checked against each subcommand) ──
 DENY_PATTERNS = [
     # Destructive filesystem
@@ -271,6 +285,9 @@ for sub in cleaned_parts:
             }
             print(json.dumps(result))
             sys.exit(0)
+    # Known read-only command → safe for this subcommand; skip the ask/deny checks.
+    if any(re.search(p, sub, re.IGNORECASE) for p, _ in ALLOW_PATTERNS):
+        continue
     for pattern, name in CASE_SENSITIVE_PATTERNS:
         if re.search(pattern, sub):
             result = {

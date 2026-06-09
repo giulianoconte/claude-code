@@ -69,8 +69,11 @@ checks each against the pattern lists. Three outcomes:
 
 **`gh` is issue-only / `git` remote is read-only** (added 2026-06-09):
 
-- `gh issue …` runs silently; `gh issue delete` and any non-issue `gh` (`pr`,
-  `release`, read-only `gh api`, …) → `ask`; the admin set above → `deny`.
+- `gh issue …` runs silently; **read-only inspection** also silent (`gh repo
+  view/list`, `gh pr/release/run/workflow view/list`, `gh pr diff/checks/status`,
+  `gh auth status` — an `ALLOW_PATTERNS` tier checked *after* the deny block so it
+  can never override it). `gh issue delete` and other non-issue `gh` → `ask`; the
+  admin set above (incl. all `gh secret`, even `list`) → `deny`.
 - `git push` / `git pull` → `ask` (you sync by hand); `git fetch` and read-only
   remote inspection (`git remote -v`, `git ls-remote`, `git log @{u}`) stay silent.
 
