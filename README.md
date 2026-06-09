@@ -2,7 +2,8 @@
 
 Configuration for using Claude Code on a remote Linux VM from a Windows
 host. Covers two terminal options: WezTerm (recommended) and Alacritty
-(fallback with limitations noted below).
+(fallback with limitations noted below), plus the machine's Claude Code
+permission/sandbox config (see [Claude Code permissions & sandbox](#claude-code-permissions--sandbox)).
 
 ## Background: Windows ConPTY
 
@@ -116,12 +117,24 @@ back out to where it lives). Targets:
 | `dotfiles/.tmux.conf` | `~/.tmux.conf` (VM) |
 | `dotfiles/.bash_aliases` | `~/.bash_aliases` (VM) |
 | `dotfiles/viddy.toml` | `~/.config/viddy.toml` (VM) |
+| `dotfiles/.claude/settings.json` | `~/.claude/settings.json` (VM) |
+| `dotfiles/.claude/hooks/check-bash-command.sh` | `~/.claude/hooks/check-bash-command.sh` (VM) |
 | `dotfiles/wezterm.lua` | `%USERPROFILE%\.wezterm.lua` (Windows host) |
 | `dotfiles/alacritty.toml` | `%APPDATA%\alacritty\alacritty.toml` (Windows host) |
 
 (A symlink-based setup would remove the drift entirely; this repo
 deliberately keeps copies so the Windows-side files can diverge from the
 VM-side originals.)
+
+## Claude Code permissions & sandbox
+
+`dotfiles/.claude/` holds the live Claude Code permission config — `settings.json`
+plus the PreToolUse Bash hook — deployed to `~/.claude/`. See
+[`dotfiles/.claude/README.md`](dotfiles/.claude/README.md) for the three-layer
+model (permission rules → deny/guardrail hook → Linux `bwrap`/`socat` sandbox),
+the `gh`-issue-only and `git`-remote-read-only guardrails, and the decision log.
+The hook is adapted from
+[dylancaponi/claude-code-permissions](https://github.com/dylancaponi/claude-code-permissions).
 
 ## Troubleshooting
 
