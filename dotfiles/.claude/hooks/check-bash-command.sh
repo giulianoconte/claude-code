@@ -35,10 +35,10 @@ BLOCK_PATTERNS = [
 
 # ── Read-only allowlist (run silently) — checked AFTER BLOCK so it can never
 # override a hard deny. Known read-only gh inspection: repo visibility/metadata,
-# PR/release/run/workflow reads, login status. NB: `gh auth status` only (NOT
-# `gh auth token`, which prints the token). The whole `gh secret` surface stays
-# hard-denied above — we don't even read secret names. Default gh api (GET) stays
-# ask — too broad to blanket-allow.
+# PR/release/run/workflow reads, login status. NB: gh auth status only (NOT
+# gh auth token, which prints the token). The whole gh secret surface stays
+# hard-denied above -- we don't even read secret names. Default gh api (GET) stays
+# ask -- too broad to blanket-allow.
 ALLOW_PATTERNS = [
     (r'\bgh\s+repo\s+(view|list)\b', 'gh repo view/list'),
     (r'\bgh\s+(pr|release|run|workflow)\s+(view|list)\b', 'gh read-only view/list'),
@@ -81,8 +81,10 @@ DENY_PATTERNS = [
     (r'git\s+restore\s+\.', 'git restore .'),
     (r'git\s+stash\s+(drop|clear)', 'git stash drop/clear'),
 
-    # GitHub: only `gh issue …` runs silently; repo admin is hard-blocked above
-    # (BLOCK_PATTERNS). Everything else gh → prompt, incl. `gh issue delete`.
+    # GitHub: only 'gh issue' runs silently; repo admin is hard-blocked above
+    # (BLOCK_PATTERNS). Everything else gh -> prompt, incl. gh issue delete.
+    # (No backticks/dollar-signs in comments: this whole block is a double-quoted
+    #  bash string, so bash would execute backticked text as a command.)
     (r'\bgh\s+issue\s+delete\b', 'gh issue delete'),
     (r'\bgh\s+(?!issue\b)\S', 'gh non-issue command'),
 
@@ -230,8 +232,8 @@ for pattern, name in pipe_patterns:
     if re.search(pattern, command, re.IGNORECASE):
         result = {
             'hookSpecificOutput': {
-                'permissionDecision': 'ask',
-                'reason': f'Flagged [{name}]: {command[:80]}'
+                'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
+                'permissionDecisionReason': f'Flagged [{name}]: {command[:80]}'
             }
         }
         print(json.dumps(result))
@@ -279,8 +281,8 @@ for sub in cleaned_parts:
         if re.search(pattern, sub, re.IGNORECASE):
             result = {
                 'hookSpecificOutput': {
-                    'permissionDecision': 'deny',
-                    'reason': f'Blocked [{name}] — repo admin is off-limits to the agent; run it yourself with ! if needed'
+                    'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                    'permissionDecisionReason': f'Blocked [{name}] — repo admin is off-limits to the agent; run it yourself with ! if needed'
                 }
             }
             print(json.dumps(result))
@@ -292,8 +294,8 @@ for sub in cleaned_parts:
         if re.search(pattern, sub):
             result = {
                 'hookSpecificOutput': {
-                    'permissionDecision': 'ask',
-                    'reason': f'Flagged [{name}]: {sub}'
+                    'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
+                    'permissionDecisionReason': f'Flagged [{name}]: {sub}'
                 }
             }
             print(json.dumps(result))
@@ -302,14 +304,16 @@ for sub in cleaned_parts:
         if re.search(pattern, sub, re.IGNORECASE):
             result = {
                 'hookSpecificOutput': {
-                    'permissionDecision': 'ask',
-                    'reason': f'Flagged [{name}]: {sub}'
+                    'hookEventName': 'PreToolUse', 'permissionDecision': 'ask',
+                    'permissionDecisionReason': f'Flagged [{name}]: {sub}'
                 }
             }
             print(json.dumps(result))
             sys.exit(0)
 
-# No deny patterns matched — auto-approve
+# Nothing flagged — emit an explicit allow so the hook is authoritative even with
+# autoAllowBashIfSandboxed=false (no permission prompt; the OS sandbox still applies).
+print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow'}}))
 sys.exit(0)
 " <<< "$INPUT")
 

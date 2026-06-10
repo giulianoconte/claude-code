@@ -17,9 +17,10 @@ The three-layer model and the `check-bash-command.sh` hook are adapted from
 [dylancaponi/claude-code-permissions](https://github.com/dylancaponi/claude-code-permissions)
 (cloned at `~/dev/misc/claude-code-permissions`). That upstream is a **macOS**
 setup (its Layer 3 is Seatbelt / `sandbox-exec`); this is the **Linux** version,
-running on the dev VM. The hook was extended here with secret-path guards and a
-`wget` deny; `settings.json` diverged substantially (see the decision log). The
-upstream clone is reference only — not a push target.
+running on the dev VM. **Heads-up:** the upstream hook never actually enforced
+anything under current Claude Code — it had an input-key bug, an output-schema bug,
+and a backtick bug (see the decision log); all three were fixed here. `settings.json`
+also diverged substantially. The upstream clone is reference only — not a push target.
 
 ## The model: two independent layers
 
@@ -53,8 +54,10 @@ fails at the network layer.
 
 ### Layer 2 — PreToolUse Bash hook (`hooks/check-bash-command.sh`)
 
-Splits compound commands (`&&`, `||`, `;`, `|`, `$()`) into subcommands and
-checks each against the pattern lists. Three outcomes:
+The **single authoritative arbiter** for Bash. It splits compound commands
+(`&&`, `||`, `;`, `|`, `$()`) into subcommands, checks each against the pattern
+lists, and emits an explicit decision for **every** command (`autoAllow` is off,
+so the hook always fires — see decision log):
 
 - **`deny` (hard block, not approvable)** — `BLOCK_PATTERNS`: GitHub repo
   administration the agent must never do on its own — `gh repo edit/delete/archive`,
@@ -64,8 +67,9 @@ checks each against the pattern lists. Three outcomes:
   `sudo`, force push, `git reset --hard`, vault/cloud deletes, DB drops,
   `curl | sh`, secret-path access, `ssh`/`scp`, `wget`, `curl -X POST`, `eval`,
   `npx`, …) plus the remote/issue guardrails below.
-- **silent** — everything else falls through (the hook never emits `allow`; a
-  non-matching command is approved by Layer 1 / the sandbox, not by the hook).
+- **`allow` (silent, no prompt)** — everything else. An explicit `allow` is
+  emitted so the hook governs even with `autoAllowBashIfSandboxed: false`; the OS
+  sandbox (Layer 3) still applies underneath.
 
 **`gh` is issue-only / `git` remote is read-only** (added 2026-06-09):
 
@@ -76,6 +80,11 @@ checks each against the pattern lists. Three outcomes:
   admin set above (incl. all `gh secret`, even `list`) → `deny`.
 - `git push` / `git pull` → `ask` (you sync by hand); `git fetch` and read-only
   remote inspection (`git remote -v`, `git ls-remote`, `git log @{u}`) stay silent.
+
+> **Editing this hook:** the pattern lists live inside `python3 -c "…"`, which is a
+> double-quoted *bash* string. **Never put a backtick or `$` in a comment or string
+> there** — bash will execute backticks as a command substitution before Python
+> runs. (That bug executed `` `gh auth token` `` on every command until fixed.)
 
 ### Layer 3 — OS sandbox (Linux)
 
@@ -94,8 +103,10 @@ Kernel-level enforcement, independent of the permission grants above:
 Relevant knobs in `settings.json` → `sandbox`:
 
 - `enabled: true` — the jail is on.
-- `autoAllowBashIfSandboxed: true` — **see decision log**. Commands the sandbox
-  fully contains run without a prompt.
+- `autoAllowBashIfSandboxed: false` — **must stay false** (see decision log).
+  `true` auto-approves sandboxed commands *and bypasses the PreToolUse hook*,
+  silently disabling Layer 2. With it false, the hook fires on every command and
+  is authoritative; the sandbox still enforces its boundaries underneath.
 - `allowUnsandboxedCommands: true` — a command that can't be sandboxed may fall
   back to running outside the jail, **with a prompt**. (This is the one prompted
   "door" in the wall: a blocked-host `curl` can still be re-run unsandboxed if you
@@ -103,16 +114,17 @@ Relevant knobs in `settings.json` → `sandbox`:
 - `excludedCommands: ["gh:*", "op:*", "pyenv:*"]` — bypass the sandbox entirely,
   by design (they need the real env: gh's token, 1Password's agent, pyenv's shell
   mutation). The `:*` form is a **prefix** match (`gh`, `gh issue list …`); a bare
-  name matches *exactly* and would only exempt `gh` with no args.
+  name matches *exactly* and would only exempt `gh` with no args. (These still go
+  through the hook — confirmed: `gh secret list` is denied.)
 - `network.allowedDomains` — the allowlist (github, npm, pypi, anthropic, google,
   brew, ghcr, 1password). `WebFetch(domain:…)` allow rules are merged in too.
 
 ## What's gated / blocked / impossible
 
-- **Gated (prompts you can approve):** hook deny-pattern matches; escaping the
-  sandbox (write outside cwd, hit a non-allowlisted host); claude.ai MCP tools.
-- **Blocked outright (no override):** Read/Edit of the deny-listed secret files;
-  the same paths are also unreadable inside the sandbox even via shell.
+- **Gated (prompts you can approve):** hook `ask` matches; escaping the sandbox
+  (write outside cwd, hit a non-allowlisted host); claude.ai MCP tools; the `Edit` tool.
+- **Blocked outright (no override):** hook `deny` matches (repo admin); Read/Edit
+  of the deny-listed secret files; those paths are also unreadable inside the sandbox.
 - **Impossible while sandboxed (capability walls):** reaching a non-allowlisted
   host, writing outside the allowed dirs, reading secret paths. Escapable only
   via the prompted unsandboxed-fallback door, or `dangerouslyDisableSandbox`
@@ -120,57 +132,42 @@ Relevant knobs in `settings.json` → `sandbox`:
 
 ## Decision log
 
-### 2026-06-09 — `autoAllowBashIfSandboxed: false → true`
+### 2026-06-09 — make the hook the authoritative arbiter (and fix it; it had never worked)
 
-**Symptom.** Nearly every Bash command (even read-only `grep`/`find`) prompted
-for approval. The project's `settings.local.json` had accumulated dozens of
-hyper-specific one-off `Bash(grep …)` / `Bash(find …)` "don't ask again" entries
-papering over it.
+**Goal.** Stop prompting on safe commands (read-only `grep`/`find`, etc.) without
+losing real guardrails. `settings.local.json` had bloated with dozens of one-off
+`Bash(grep …)` "don't ask again" approvals papering over the prompts.
 
-**Root cause.** Two things compounded:
-1. The hook was *designed* to auto-approve everything not on its deny-list, but
-   was never wired to emit `permissionDecision: "allow"` — it only emits `"ask"`
-   or nothing. A silent hook doesn't approve.
-2. With `autoAllowBashIfSandboxed: false`, being sandboxed bought no prompt-free
-   pass either. So safe commands fell through both and prompted.
+**False start — `autoAllowBashIfSandboxed: true`.** First tried "trust the
+sandbox": flip autoAllow to `true` so contained commands run silently. **That
+silently disables the hook** — `autoAllow: true` auto-approves sandboxed commands
+and skips the PreToolUse hook entirely, so the deny-list and the new `gh`/`git`
+guardrails never fire. Confirmed live (`rm -rf`, `gh secret list` ran with no
+prompt, no hook involvement). Reverted to `autoAllowBashIfSandboxed: false`.
 
-**Decision.** Make the **sandbox** the trust boundary for silent execution: flip
-`autoAllowBashIfSandboxed` to `true`. Anything the sandbox fully contains runs
-without a prompt; anything that needs to *leave* the sandbox (write outside cwd,
-new network host) still prompts via `allowUnsandboxedCommands: true`; the hook
-stays as the deny-tripwire, forcing `"ask"` on destructive patterns **even when
-sandboxed** (e.g. `rm -rf` inside the jail still prompts). Sandbox = "can't hurt
-the system"; hook = "ask before destructive-even-if-contained."
+**The hook had never actually enforced anything — three bugs, all fixed:**
+1. **Input key.** Read `data['input']['command']`; Claude Code sends
+   `data['tool_input']['command']`. `command` was always empty → the hook exited
+   immediately, checking nothing. (`test-hook.sh` "passed" by feeding the same
+   wrong key.) Fixed to read `tool_input` (fallback `input`).
+2. **Output schema.** Emitted `{"hookSpecificOutput":{"permissionDecision":…,
+   "reason":…}}` — missing the required `"hookEventName":"PreToolUse"` and using
+   `reason` instead of `permissionDecisionReason`. Claude Code silently discarded
+   every verdict. Fixed to the documented schema.
+3. **Backticks in comments.** The Python runs via `python3 -c "…"` (a double-quoted
+   *bash* string), so backticked text in comments (e.g. `` `gh auth token` ``) was
+   executed by bash as a command substitution on every invocation — crashing the
+   hook and leaking the GH token into process args. Removed all backticks.
 
-**Rationale.** The sandbox is a hard capability wall; the deny-regex is a
-heuristic with gaps. "Silent if contained" is a sounder rule than "silent if my
-pattern list didn't catch it." One boolean, fully reversible.
+**Final architecture.** `autoAllowBashIfSandboxed: false` + the hook emits an
+explicit `allow`/`ask`/`deny` for *every* command → it always fires and is
+authoritative; the OS sandbox (Layer 3) stays as the capability wall underneath.
+A hook `allow` suppresses the prompt but the command still runs sandboxed.
+**Verified live:** safe `grep` → silent; `rm -rf` → prompt; `gh secret` /
+`gh repo edit` → blocked.
 
-**Alternative rejected.** Finishing the hook to emit `"allow"` on non-matches
-(realizing its documented intent) — rejected as broader (it would also silently
-approve *unsandboxed-fallback* commands) and as adding untested allow-logic when
-a one-line flag does the job. The hook keeps earning its place untouched.
-
-**Caveat to watch.** Assumes the hook's `"ask"` still wins over the sandbox
-auto-allow (PreToolUse hook decisions should take precedence). If a destructive
-command ever stopped prompting, that assumption broke — revisit immediately.
-
-### 2026-06-09 — hook was a silent no-op (input-key bug, fixed) + `gh`/`git` guardrails
-
-**Found while adding the guardrails below.** The hook read the command from
-`data['input']['command']`, but Claude Code sends it under
-`data['tool_input']['command']`. So `command` was always empty, the hook exited
-at `if not command.strip()`, and **Layer 2 never fired** — every destructive
-pattern (`rm -rf`, force-push, `curl | sh`, secret-via-shell) went unchecked.
-`test-hook.sh` "passed" only because it fed the same wrong `input` key.
-
-Fixed to read `tool_input` (falling back to `input`), verified live with a
-captured payload. This was urgent: the autoAllow flip above makes the hook the
-**only** tripwire on sandboxed destructive commands, so a dead hook + autoAllow
-would have silently auto-approved `rm -rf` in the working tree.
-
-**Guardrails added (the session's request).** `gh` restricted to issue ops;
-`git` remote made read-only (see Layer 2). Repo administration is now a hard
-`deny` — prompted by the agent having flipped this repo's visibility *unasked*
-earlier in the same session. That class of action is now off-limits in config,
-not merely by intent.
+**Guardrails (the session's request).** `gh` restricted to issue ops + a read-only
+inspection allowlist; `git` remote made read-only (push/pull → ask, fetch silent);
+repo administration hard-`deny` — prompted by the agent having flipped this repo's
+visibility *unasked* earlier the same session. Off-limits in config now, not just
+by intent.

@@ -46,7 +46,7 @@
   },
   "sandbox": {
     "enabled": true,
-    "autoAllowBashIfSandboxed": true,
+    "autoAllowBashIfSandboxed": false,
     "allowUnsandboxedCommands": true,
     "network": {
       "allowedDomains": [
