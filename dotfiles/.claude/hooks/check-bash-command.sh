@@ -62,7 +62,7 @@ DENY_PATTERNS = [
     (r'\bwipefs\s', 'wipefs'),
     (r'diskutil\s+erase', 'diskutil erase'),
     (r'\bfdisk\s', 'fdisk'),
-    (r'>\s*/(?!tmp|private/tmp|dev/null)', 'truncate root file'),
+    (r'(?:^|[\s\d])>+\s*/(?!tmp|private/tmp|dev/null)', 'truncate root file'),
 
     # Destructive git
     (r'git\s+push\s+.*--force', 'git push --force'),
