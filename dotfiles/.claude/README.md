@@ -31,11 +31,13 @@ A Bash command passes through two gates that answer *different* questions:
 2. **Sandbox execution layer** — *"Once it runs, what can it actually touch?"*
    The OS jail: `bwrap` (filesystem/process isolation), `socat` (network proxy),
    optional seccomp. It doesn't prompt — it makes operations succeed or fail.
+   **Currently disabled (see Layer 3); the permission layer is the active guardrail.**
 
-The key consequence: **a permission `allow` is not a capability.** Allowing
-`curl` only means "run it without prompting"; the sandbox independently decides
-what `curl` can reach. An allowed `curl https://not-allowlisted.example` still
-fails at the network layer.
+The key consequence (when the sandbox is on): **a permission `allow` is not a
+capability** — allowing `curl` only means "run it without prompting"; the sandbox
+independently decides what it can reach. With the sandbox currently **off**, that
+second gate is gone: an `allow` runs with full capability, so the hook's deny/ask
+list is the only thing in front of a command.
 
 ### Layer 1 — permission rules (`settings.json`)
 
@@ -86,9 +88,15 @@ so the hook always fires — see decision log):
 > there** — bash will execute backticks as a command substitution before Python
 > runs. (That bug executed `` `gh auth token` `` on every command until fixed.)
 
-### Layer 3 — OS sandbox (Linux)
+### Layer 3 — OS sandbox (Linux) — currently DISABLED
 
-Kernel-level enforcement, independent of the permission grants above:
+**`sandbox.enabled: false` as of 2026-06-09** (see decision log). The OS sandbox
+fought the dev workflow — `dotnet build`, `git status`, and most build/restore
+commands can't run contained, so they constantly hit the unsandboxed-fallback
+prompt. With it off, the hook (Layer 2) is the sole guardrail and routine dev work
+runs prompt-free. The config below is left in place (inert) — flip `enabled` to
+`true` to restore it. When enabled it provides kernel-level enforcement,
+independent of the permission grants above:
 
 - **`bwrap`** (bubblewrap) — filesystem/process isolation. Writes confined to the
   working dir + `$TMPDIR` + a few sinks; reads broad except the deny list;
@@ -102,7 +110,7 @@ Kernel-level enforcement, independent of the permission grants above:
 
 Relevant knobs in `settings.json` → `sandbox`:
 
-- `enabled: true` — the jail is on.
+- `enabled: false` — **currently off** (see above / decision log); `true` re-enables the jail.
 - `autoAllowBashIfSandboxed: false` — **must stay false** (see decision log).
   `true` auto-approves sandboxed commands *and bypasses the PreToolUse hook*,
   silently disabling Layer 2. With it false, the hook fires on every command and
@@ -119,18 +127,31 @@ Relevant knobs in `settings.json` → `sandbox`:
 - `network.allowedDomains` — the allowlist (github, npm, pypi, anthropic, google,
   brew, ghcr, 1password). `WebFetch(domain:…)` allow rules are merged in too.
 
-## What's gated / blocked / impossible
+## What's gated / blocked (sandbox off — the hook is the guardrail)
 
-- **Gated (prompts you can approve):** hook `ask` matches; escaping the sandbox
-  (write outside cwd, hit a non-allowlisted host); claude.ai MCP tools; the `Edit` tool.
+- **Gated (prompts you can approve):** hook `ask` matches (`rm -r`, `git push`/`pull`,
+  non-issue `gh`, destructive ops); the `Edit` tool; claude.ai MCP tools.
 - **Blocked outright (no override):** hook `deny` matches (repo admin); Read/Edit
-  of the deny-listed secret files; those paths are also unreadable inside the sandbox.
-- **Impossible while sandboxed (capability walls):** reaching a non-allowlisted
-  host, writing outside the allowed dirs, reading secret paths. Escapable only
-  via the prompted unsandboxed-fallback door, or `dangerouslyDisableSandbox`
-  (also prompted).
+  of the deny-listed secret files.
+- **No longer enforced (sandbox off):** network confinement and filesystem-write
+  confinement — a command can now reach any host and write anywhere. The hook's
+  deny/ask list is the protection, not an OS capability wall. (Secret *reads* are
+  still covered by the Read/Edit denies + the hook's secret-path `ask` guards.)
 
 ## Decision log
+
+### 2026-06-09 (later) — disabled the OS sandbox (`sandbox.enabled: false`)
+
+After making the hook authoritative (next entry), the remaining friction was the
+sandbox itself: `dotnet build`, `git status`, and most build/restore commands can't
+run contained (NuGet/network + writes outside cwd), so each hit the "Bash command
+(unsandboxed)" fallback prompt — pervasive across a multi-repo dev workflow. Turned
+the sandbox off. The guardrails the user wanted live in the hook (Layer 2), which is
+independent of the sandbox and still fully enforces (verified live: safe `grep`
+silent, `gh secret` / repo-admin blocked). Trade-off: lose the network/filesystem
+capability wall (defense-in-depth vs. a rogue command) — an acceptable trade on a
+trusted single-user dev VM for a usable workflow. The sandbox config is left in
+place but inert; flip `enabled` back to `true` to restore it.
 
 ### 2026-06-09 — make the hook the authoritative arbiter (and fix it; it had never worked)
 
